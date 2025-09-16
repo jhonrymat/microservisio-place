@@ -1,0 +1,97 @@
+// Base de datos para el microservicio (conexión "micro")
+Table lugar_vinculado {
+  id bigint [pk, increment]
+  id_negocio_plataforma bigint [not null]  // Referencia a la plataforma (esto debe estar en la BD de la plataforma)
+  id_lugar varchar(255) [not null]  // ID único del lugar en Google Places
+  confianza decimal(5,2) [not null]  // Confianza entre 0 y 1
+  estrategia_coincidencia varchar(32) [not null] // 'búsqueda_texto', 'manual', 'rebind'
+  estado varchar(16) [not null]  // 'vinculado', 'necesita_revisión', 'inválido'
+  ultima_verificacion timestamp
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  Indexes {
+    (id_negocio_plataforma) [unique]
+  }
+}
+
+Table instantanea_lugar {
+  id bigint [pk, increment]
+  id_lugar varchar(255) [not null]
+  carga jsonb [not null]  // Detalles del negocio almacenados como JSON (caché)
+  fecha_fetched timestamp [default: `now()`]
+  fecha_expiracion_ttl timestamp [not null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table bloqueo_campo {
+  id bigint [pk, increment]
+  id_negocio_plataforma bigint [not null]
+  campo varchar(64) [not null]  // 'telefono', 'sitio_web', etc.
+  bloqueado boolean [default: true]
+  updated_at timestamp [default: `now()`]
+
+  Indexes {
+    (id_negocio_plataforma, campo) [unique]
+  }
+}
+
+Table historial_cambio {
+  id bigint [pk, increment]
+  id_negocio_plataforma bigint [not null]
+  campo varchar(64) [not null]
+  valor_anterior text
+  valor_nuevo text
+  fuente varchar(32) [not null]  // 'places_sync', 'manual'
+  fecha_aplicacion timestamp [default: `now()`]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  Indexes {
+    (id_negocio_plataforma)
+  }
+}
+
+Table lote_importacion {
+  id bigint [pk, increment]
+  nombre_archivo varchar(255) [not null]
+  total_filas int [not null]
+  filas_procesadas int [not null]
+  estado varchar(16) [default: 'pendiente']  // 'pendiente', 'procesando', 'completado', 'fallido'
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table mapa_categoria {
+  tipo_google varchar(255) [not null]    // 'restaurante', 'tienda', etc.
+  categoria_plataforma varchar(255) [not null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  Indexes {
+    (tipo_google) [unique]
+  }
+}
+
+Table ajustes {
+  clave varchar(255) [primary key, not null]  // 'ttl_detalles', 'ttl_lat_lng', 'codigo_idioma', etc.
+  valor varchar(255) [not null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table fotos_locales {
+  id bigint [pk, increment]
+  place_id varchar(255)     // id del lugar
+  photo_name varchar(255)   // places/.../photos/...
+  path varchar(255)         // ruta local o URL CDN (thumbnail/cover)
+  size_label varchar(16)    // 'thumb' | 'cover' | 'full'
+  mime varchar(64)
+  width int
+  height int
+  author_name varchar(255)
+  author_uri varchar(255)
+  fetched_at timestamp
+}
+
