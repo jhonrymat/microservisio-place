@@ -10,12 +10,15 @@ use App\Services\FotosService;
 use App\Models\InstantaneaLugar;
 use Illuminate\Support\Facades\DB;
 use Filament\Actions\BulkActionGroup;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Toggle;
+use Filament\Schemas\Components\Grid;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Tables\Actions\EditAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
+use Filament\Schemas\Components\Section;
 use Filament\Tables\Columns\ImageColumn;
 use App\Services\ImportarNegociosService;
 use App\Services\SincronizarListingService;
@@ -163,32 +166,143 @@ class InstantaneaLugarsTable
 
                 // En tu InstantaneaLugarsTable.php - reemplaza la acción 'vincular'
 
+                // En InstantaneaLugarsTable.php - Reemplazar completamente la acción 'vincular'
+
                 Action::make('vincular')
                     ->label('Vincular a Listing')
                     ->icon('heroicon-o-link')
+                    ->modalWidth('2xl')
                     ->form([
-                        TextInput::make('id_listing')
-                            ->label('ID en listing (platform)')
-                            ->numeric()
-                            ->required(),
-                        Toggle::make('descargar_fotos')
-                            ->label('Descargar fotos en alta calidad')
-                            ->default(true)
-                            ->helperText('Se eliminarán las fotos de baja calidad y se descargarán en alta resolución'),
-                        TextInput::make('max_fotos')
-                            ->label('Máx. fotos (0 = todas)')
-                            ->numeric()
-                            ->default(0)
-                            ->helperText('Cantidad máxima de fotos a descargar en alta calidad'),
-                        Toggle::make('limpiar_lote')
-                            ->label('Eliminar candidatos descartados')
-                            ->default(true)
-                            ->helperText('Elimina los demás resultados de esta búsqueda'),
+                        // SELECT INTELIGENTE CON BÚSQUEDA
+                        Select::make('id_listing')
+                            ->label('Buscar Negocio en Plataforma')
+                            ->searchable()
+                            ->required()
+                            ->helperText('Busca por nombre o ID del negocio')
+                            ->placeholder('Escribe para buscar...')
+                            ->getSearchResultsUsing(function (string $search) {
+                                // Buscar por ID o por nombre
+                                return \App\Models\NegocioPlataforma::query()
+                                    ->where(function ($query) use ($search) {
+                                    $query->where('name', 'like', "%{$search}%")
+                                        ->orWhere('id', '=', $search);
+                                })
+                                    ->where('status', '!=', 'deleted') // Opcional: excluir eliminados
+                                    ->limit(20)
+                                    ->get()
+                                    ->mapWithKeys(function ($listing) {
+                                    // Formato: "ID - Nombre | Ciudad"
+                                    $label = sprintf(
+                                        '#%d - %s%s',
+                                        $listing->id,
+                                        $listing->name,
+                                        $listing->address ? ' | ' . \Illuminate\Support\Str::limit($listing->address, 40) : ''
+                                    );
+                                    return [$listing->id => $label];
+                                })
+                                    ->toArray();
+                            })
+                            ->getOptionLabelUsing(function ($value) {
+                                $listing = \App\Models\NegocioPlataforma::find($value);
+                                if (!$listing) {
+                                    return "Listing #{$value}";
+                                }
+                                return sprintf(
+                                    '#%d - %s%s',
+                                    $listing->id,
+                                    $listing->name,
+                                    $listing->address ? ' | ' . \Illuminate\Support\Str::limit($listing->address, 40) : ''
+                                );
+                            })
+                            ->reactive() // Para que actualice los campos siguientes
+                            ->afterStateUpdated(function ($state, callable $set) {
+                                if ($state) {
+                                    $listing = \App\Models\NegocioPlataforma::find($state);
+                                    if ($listing) {
+                                        $set('preview_name', $listing->name);
+                                        $set('preview_address', $listing->address);
+                                        $set('preview_phone', $listing->phone);
+                                        $set('preview_email', $listing->email);
+                                        $set('preview_status', $listing->status);
+                                    }
+                                }
+                            }),
+
+                        // SECCIÓN DE PREVISUALIZACIÓN
+                        Section::make('📋 Información del Negocio Seleccionado')
+                            ->description('Verifica que esta información corresponda al negocio correcto')
+                            ->schema([
+                                Grid::make(2)
+                                    ->schema([
+                                        TextInput::make('preview_name')
+                                            ->label('Nombre')
+                                            ->disabled()
+                                            ->dehydrated(false),
+
+                                        TextInput::make('preview_status')
+                                            ->label('Estado')
+                                            ->disabled()
+                                            ->dehydrated(false),
+                                    ]),
+
+                                TextInput::make('preview_address')
+                                    ->label('Dirección')
+                                    ->disabled()
+                                    ->dehydrated(false),
+
+                                Grid::make(2)
+                                    ->schema([
+                                        TextInput::make('preview_phone')
+                                            ->label('Teléfono')
+                                            ->disabled()
+                                            ->dehydrated(false),
+
+                                        TextInput::make('preview_email')
+                                            ->label('Email')
+                                            ->disabled()
+                                            ->dehydrated(false),
+                                    ]),
+                            ])
+                            ->visible(fn(callable $get) => filled($get('id_listing'))),
+
+                        // SEPARADOR
+                        Section::make('⚙️ Opciones de Sincronización')
+                            ->schema([
+                                Toggle::make('descargar_fotos')
+                                    ->label('Descargar fotos en alta calidad')
+                                    ->default(true)
+                                    ->helperText('Se eliminarán las fotos de baja calidad y se descargarán en alta resolución')
+                                    ->inline(false),
+
+                                TextInput::make('max_fotos')
+                                    ->label('Máx. fotos (0 = todas)')
+                                    ->numeric()
+                                    ->default(0)
+                                    ->helperText('Cantidad máxima de fotos a descargar en alta calidad')
+                                    ->visible(fn(callable $get) => $get('descargar_fotos')),
+
+                                Toggle::make('limpiar_lote')
+                                    ->label('Eliminar candidatos descartados')
+                                    ->default(true)
+                                    ->helperText('Elimina los demás resultados de esta búsqueda')
+                                    ->inline(false),
+                            ]),
                     ])
                     ->action(function (array $data, $record) {
                         try {
                             $svc = app(ImportarNegociosService::class);
                             $fotosService = app(FotosService::class);
+
+                            // VALIDAR que el listing existe
+                            $listing = \App\Models\NegocioPlataforma::find($data['id_listing']);
+                            if (!$listing) {
+                                throw new \Exception("El listing #{$data['id_listing']} no existe en la plataforma.");
+                            }
+
+                            // VALIDAR que el listing no está eliminado
+                            if ($listing->status === 'deleted') {
+                                throw new \Exception("El listing #{$data['id_listing']} está marcado como eliminado.");
+                            }
 
                             // 1) LIMPIAR TODAS LAS FOTOS DEL LOTE (incluyendo las del seleccionado)
                             if (!empty($data['limpiar_lote']) && $record->batch_token) {
@@ -277,7 +391,7 @@ class InstantaneaLugarsTable
 
                             Notification::make()
                                 ->title('✅ Vinculación completada')
-                                ->body("Listing {$data['id_listing']} actualizado con fotos de alta calidad")
+                                ->body("'{$listing->name}' (ID: {$data['id_listing']}) vinculado exitosamente con fotos de alta calidad")
                                 ->success()
                                 ->duration(5000)
                                 ->send();
@@ -285,6 +399,7 @@ class InstantaneaLugarsTable
                         } catch (\Exception $e) {
                             \Log::error('Error al vincular y descargar fotos', [
                                 'error' => $e->getMessage(),
+                                'trace' => $e->getTraceAsString(),
                                 'place_id' => $record->id_lugar,
                                 'listing_id' => $data['id_listing'] ?? null,
                             ]);
@@ -295,6 +410,8 @@ class InstantaneaLugarsTable
                                 ->danger()
                                 ->duration(10000)
                                 ->send();
+
+                            throw $e; // Re-lanzar para evitar commits parciales
                         }
                     }),
 
