@@ -86,7 +86,7 @@ class FotosService
      * Previsualización: de una lista de candidatos "places", descarga HASTA 3 miniaturas por lugar.
      * $places: arreglo como viene de searchText (cada item con ['id','photos'[], ...]).
      */
-    public function prefetchMiniaturasCandidatos(array $places, int $maxPorLugar = 3, int $ancho = 320): void
+    public function prefetchMiniaturasCandidatos(array $places, int $maxPorLugar = 3, int $ancho = 1024): void
     {
         foreach ($places as $p) {
             $placeId = $p['id'] ?? null;
@@ -102,7 +102,7 @@ class FotosService
                     continue;
 
                 $attrib = ($photo['authorAttributions'][0] ?? []) ?: [];
-                $this->descargarFoto($placeId, $name, $ancho, 'thumb', $attrib);
+                $this->descargarFoto($placeId, $name, $ancho, 'full', $attrib);
 
                 if (++$count >= $maxPorLugar)
                     break;
@@ -119,7 +119,7 @@ class FotosService
         array $sizes = [
             ['label' => 'thumb', 'w' => 400],
             ['label' => 'cover', 'w' => 1200],
-            ['label' => 'full',  'w' => 2048],  
+            ['label' => 'full', 'w' => 2048],
         ]
     ): array {
         $placeId = $detalles['id'] ?? null;
@@ -154,6 +154,107 @@ class FotosService
             ->get()
             ->map(fn($f) => Storage::disk($this->disk)->url($f->path)) // 👈 /storage/...
             ->all();
+    }
+
+    /**
+     * Eliminar todas las fotos de varios lugares (place_ids)
+     * Útil para limpiar fotos de baja calidad antes de descargar en alta calidad
+     *
+     * @param array $placeIds Array de place_ids
+     * @return int Cantidad de fotos eliminadas
+     */
+    public function eliminarFotosDeVariosLugares(array $placeIds): int
+    {
+        if (empty($placeIds)) {
+            return 0;
+        }
+
+        $fotos = FotoLocal::whereIn('place_id', $placeIds)->get();
+        $eliminadas = 0;
+
+        foreach ($fotos as $foto) {
+            // Eliminar archivo físico del storage
+            if (Storage::disk($this->disk)->exists($foto->path)) {
+                Storage::disk($this->disk)->delete($foto->path);
+            }
+
+            // Eliminar registro de base de datos
+            $foto->delete();
+            $eliminadas++;
+        }
+
+        \Log::info('Fotos eliminadas del storage', [
+            'place_ids' => $placeIds,
+            'total_eliminadas' => $eliminadas,
+        ]);
+
+        return $eliminadas;
+    }
+
+    /**
+     * Eliminar todas las fotos de un solo lugar
+     *
+     * @param string $placeId
+     * @return int Cantidad de fotos eliminadas
+     */
+    public function eliminarFotosDeUnLugar(string $placeId): int
+    {
+        return $this->eliminarFotosDeVariosLugares([$placeId]);
+    }
+
+    /**
+     * Eliminar fotos de un tamaño específico para un lugar
+     * Útil si solo quieres eliminar thumbs pero mantener full, por ejemplo
+     *
+     * @param string $placeId
+     * @param string $sizeLabel 'thumb', 'cover', 'full'
+     * @return int Cantidad de fotos eliminadas
+     */
+    public function eliminarFotosPorTamano(string $placeId, string $sizeLabel): int
+    {
+        $fotos = FotoLocal::where('place_id', $placeId)
+            ->where('size_label', $sizeLabel)
+            ->get();
+
+        $eliminadas = 0;
+
+        foreach ($fotos as $foto) {
+            if (Storage::disk($this->disk)->exists($foto->path)) {
+                Storage::disk($this->disk)->delete($foto->path);
+            }
+            $foto->delete();
+            $eliminadas++;
+        }
+
+        return $eliminadas;
+    }
+
+    /**
+     * Limpiar fotos huérfanas (que no tienen InstantaneaLugar asociado)
+     * Útil para mantenimiento programado
+     *
+     * @return int Cantidad de fotos eliminadas
+     */
+    public function limpiarFotosHuerfanas(): int
+    {
+        // Obtener place_ids que ya no existen en instantanea_lugar
+        $placeIdsValidos = \App\Models\InstantaneaLugar::pluck('id_lugar');
+
+        $fotosHuerfanas = FotoLocal::whereNotIn('place_id', $placeIdsValidos)->get();
+
+        $eliminadas = 0;
+
+        foreach ($fotosHuerfanas as $foto) {
+            if (Storage::disk($this->disk)->exists($foto->path)) {
+                Storage::disk($this->disk)->delete($foto->path);
+            }
+            $foto->delete();
+            $eliminadas++;
+        }
+
+        \Log::info('Fotos huérfanas eliminadas', ['total' => $eliminadas]);
+
+        return $eliminadas;
     }
 }
 

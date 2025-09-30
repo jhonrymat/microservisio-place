@@ -57,6 +57,24 @@ class InstantaneaLugarsTable
                     ->limit(40)
                     ->wrap(),
 
+                TextColumn::make('busquedaImportacion.nombre')
+                    ->label('Búsqueda Origen')
+                    ->searchable()
+                    ->limit(25)
+                    ->placeholder('—')
+                    ->description(fn($record) => $record->busquedaImportacion?->ciudad),
+
+                TextColumn::make('busquedaImportacion.estado')
+                    ->label('Estado Búsqueda')
+                    ->badge()
+                    ->colors([
+                        'warning' => 'pendiente',
+                        'info' => 'ejecutando',
+                        'success' => 'completado',
+                        'danger' => 'fallido',
+                    ])
+                    ->placeholder('—'),
+
                 TextColumn::make('fecha_fetched')
                     ->dateTime()
                     ->sortable(),
@@ -93,6 +111,42 @@ class InstantaneaLugarsTable
                         }
                         return $query;
                     }),
+
+                // En los filtros, añadir:
+                \Filament\Tables\Filters\Filter::make('busqueda_origen')
+                    ->label('Búsqueda de Origen')
+                    ->form([
+                        \Filament\Forms\Components\Select::make('busqueda_id')
+                            ->label('Búsqueda')
+                            ->options(function () {
+                                return \App\Models\BusquedaImportacion::query()
+                                    ->selectRaw('id, CONCAT(nombre, " (", COALESCE(ciudad, "Sin ciudad"), ")") as display_name')
+                                    ->orderBy('created_at', 'desc')
+                                    ->limit(50)
+                                    ->pluck('display_name', 'id');
+                            })
+                            ->searchable(),
+                    ])
+                    ->query(function ($query, array $data) {
+                        $busquedaId = $data['busqueda_id'] ?? null;
+                        if (filled($busquedaId)) {
+                            $busqueda = \App\Models\BusquedaImportacion::find($busquedaId);
+                            if ($busqueda && $busqueda->batch_token) {
+                                $query->where('batch_token', $busqueda->batch_token);
+                            }
+                        }
+                        return $query;
+                    }),
+
+                \Filament\Tables\Filters\Filter::make('sin_vincular')
+                    ->label('Sin Vincular')
+                    ->toggle()
+                    ->query(fn($query) => $query->sinVincular()),
+
+                \Filament\Tables\Filters\Filter::make('vinculados')
+                    ->label('Vinculados')
+                    ->toggle()
+                    ->query(fn($query) => $query->vinculados()),
             ])
             ->recordActions([
                 // Acción: Ver JSON
@@ -107,63 +161,141 @@ class InstantaneaLugarsTable
                         return view('filament.partials.json-pretty', ['json' => $pretty]);
                     }),
 
-                // Acción: Vincular a Listing
+                // En tu InstantaneaLugarsTable.php - reemplaza la acción 'vincular'
+
                 Action::make('vincular')
                     ->label('Vincular a Listing')
                     ->icon('heroicon-o-link')
                     ->form([
                         TextInput::make('id_listing')
-                            ->label('ID en listing (platform)')->numeric()->required(),
+                            ->label('ID en listing (platform)')
+                            ->numeric()
+                            ->required(),
                         Toggle::make('descargar_fotos')
-                            ->label('Descargar fotos al confirmar')->default(true),
+                            ->label('Descargar fotos en alta calidad')
+                            ->default(true)
+                            ->helperText('Se eliminarán las fotos de baja calidad y se descargarán en alta resolución'),
                         TextInput::make('max_fotos')
-                            ->label('Máx. fotos (0 = todas)')->numeric()->default(0),
+                            ->label('Máx. fotos (0 = todas)')
+                            ->numeric()
+                            ->default(0)
+                            ->helperText('Cantidad máxima de fotos a descargar en alta calidad'),
                         Toggle::make('limpiar_lote')
-                            ->label('Eliminar los demás resultados de este lote')
-                            ->default(true), // ← por defecto SÍ limpia
+                            ->label('Eliminar candidatos descartados')
+                            ->default(true)
+                            ->helperText('Elimina los demás resultados de esta búsqueda'),
                     ])
                     ->action(function (array $data, $record) {
-                        $svc = app(ImportarNegociosService::class);
+                        try {
+                            $svc = app(ImportarNegociosService::class);
+                            $fotosService = app(FotosService::class);
 
-                        // 1) Vincular + Detalles + Sincronizar
-                        $svc->vincularConPlataforma((int) $data['id_listing'], $record->id_lugar, 0.95, true);
-                        $det = $svc->obtenerDetalles($record->id_lugar);
-                        $map = app(MapeoPlacesAListingService::class)->mapear($det);
-                        app(SincronizarListingService::class)->aplicar((int) $data['id_listing'], $map, 'places_sync');
+                            // 1) LIMPIAR TODAS LAS FOTOS DEL LOTE (incluyendo las del seleccionado)
+                            if (!empty($data['limpiar_lote']) && $record->batch_token) {
+                                DB::transaction(function () use ($record, $fotosService) {
+                                    // Obtener TODOS los place_ids del lote (incluyendo el seleccionado)
+                                    $todosLosPlaceIds = InstantaneaLugar::where('batch_token', $record->batch_token)
+                                        ->pluck('id_lugar');
 
-                        // 2) (Opcional) Fotos del elegido
-                        if (!empty($data['descargar_fotos'])) {
-                            if ((int) $data['max_fotos'] > 0 && !empty($det['photos'])) {
-                                $det['photos'] = array_slice($det['photos'], 0, (int) $data['max_fotos']);
+                                    if ($todosLosPlaceIds->isNotEmpty()) {
+                                        // BORRAR TODAS las fotos del lote (incluyendo las del seleccionado)
+                                        $fotosService->eliminarFotosDeVariosLugares($todosLosPlaceIds->toArray());
+
+                                        \Log::info('Fotos de baja calidad eliminadas', [
+                                            'batch_token' => $record->batch_token,
+                                            'places_eliminados' => $todosLosPlaceIds->count(),
+                                        ]);
+                                    }
+
+                                    // Borrar snapshots de los candidatos NO seleccionados
+                                    $otros = InstantaneaLugar::where('batch_token', $record->batch_token)
+                                        ->where('id_lugar', '<>', $record->id_lugar)
+                                        ->pluck('id_lugar');
+
+                                    if ($otros->isNotEmpty()) {
+                                        InstantaneaLugar::whereIn('id_lugar', $otros)->delete();
+
+                                        \Log::info('Candidatos no seleccionados eliminados', [
+                                            'batch_token' => $record->batch_token,
+                                            'candidatos_eliminados' => $otros->count(),
+                                        ]);
+                                    }
+                                });
                             }
-                            app(FotosService::class)->importarFotosDeLugarSeleccionado(
-                                $det,
-                                [['label' => 'thumb', 'w' => 400], ['label' => 'cover', 'w' => 1200]]
-                            );
-                        }
 
-                        // 3) LIMPIAR LOTE (borra los demás candidatos y sus fotos)
-                        if (!empty($data['limpiar_lote']) && $record->batch_token) {
-                            DB::transaction(function () use ($record) {
-                                // place_ids del mismo lote excepto el elegido
-                                $otros = InstantaneaLugar::where('batch_token', $record->batch_token)
-                                    ->where('id_lugar', '<>', $record->id_lugar)
-                                    ->pluck('id_lugar');
+                            // 2) Vincular + Obtener detalles + Sincronizar
+                            $svc->vincularConPlataforma((int) $data['id_listing'], $record->id_lugar, 0.95, true);
+                            $det = $svc->obtenerDetalles($record->id_lugar);
+                            $map = app(MapeoPlacesAListingService::class)->mapear($det);
+                            app(SincronizarListingService::class)->aplicar((int) $data['id_listing'], $map, 'places_sync');
 
-                                if ($otros->isNotEmpty()) {
-                                    // borrar fotos de esos place_ids
-                                    FotoLocal::whereIn('place_id', $otros)->delete();
-                                    // borrar snapshots
-                                    InstantaneaLugar::whereIn('id_lugar', $otros)->delete();
+                            // 3) Descargar fotos en ALTA CALIDAD del lugar seleccionado
+                            if (!empty($data['descargar_fotos'])) {
+                                // Limitar cantidad si se especifica
+                                if ((int) $data['max_fotos'] > 0 && !empty($det['photos'])) {
+                                    $det['photos'] = array_slice($det['photos'], 0, (int) $data['max_fotos']);
                                 }
-                            });
-                        }
 
-                        Notification::make()
-                            ->title('Vinculado y sincronizado')
-                            ->body("Listing {$data['id_listing']} actualizado desde {$record->id_lugar}")
-                            ->success()
-                            ->send();
+                                // Descargar en ALTA calidad (thumb 400, cover 1200, full 2048)
+                                $fotos = $fotosService->importarFotosDeLugarSeleccionado(
+                                    $det,
+                                    [
+                                        ['label' => 'thumb', 'w' => 400],
+                                        ['label' => 'cover', 'w' => 1200],
+                                        ['label' => 'full', 'w' => 2048],  // 👈 Alta calidad
+                                    ]
+                                );
+
+                                \Log::info('Fotos de alta calidad descargadas', [
+                                    'place_id' => $record->id_lugar,
+                                    'total_fotos' => count($fotos),
+                                    'fotos_originales' => count($det['photos'] ?? []),
+                                ]);
+
+                                // Actualizar thumbnail y cover en el listing
+                                $thumb = collect($fotos)->firstWhere('size_label', 'thumb');
+                                $cover = collect($fotos)->firstWhere('size_label', 'cover');
+
+                                $locks = \App\Models\BloqueoCampo::where('id_negocio_plataforma', (int) $data['id_listing'])
+                                    ->pluck('bloqueado', 'campo');
+
+                                $updates = ['date_modified' => time()];
+
+                                if ($thumb && !($locks['listing_thumbnail'] ?? false)) {
+                                    $updates['listing_thumbnail'] = route('media.local', $thumb->id);
+                                }
+                                if ($cover && !($locks['listing_cover'] ?? false)) {
+                                    $updates['listing_cover'] = route('media.local', $cover->id);
+                                }
+
+                                if (count($updates) > 1) {
+                                    DB::connection('platform')->table('listing')
+                                        ->where('id', (int) $data['id_listing'])
+                                        ->update($updates);
+                                }
+                            }
+
+                            Notification::make()
+                                ->title('✅ Vinculación completada')
+                                ->body("Listing {$data['id_listing']} actualizado con fotos de alta calidad")
+                                ->success()
+                                ->duration(5000)
+                                ->send();
+
+                        } catch (\Exception $e) {
+                            \Log::error('Error al vincular y descargar fotos', [
+                                'error' => $e->getMessage(),
+                                'place_id' => $record->id_lugar,
+                                'listing_id' => $data['id_listing'] ?? null,
+                            ]);
+
+                            Notification::make()
+                                ->title('❌ Error en la vinculación')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->duration(10000)
+                                ->send();
+                        }
                     }),
 
                 Action::make('extender_ttl')
@@ -199,6 +331,16 @@ class InstantaneaLugarsTable
                         ]);
                     }),
 
+                Action::make('ver_busqueda_origen')
+                    ->label('Ver Búsqueda')
+                    ->icon('heroicon-o-arrow-up-right')
+                    ->color('gray')
+                    ->visible(fn($record) => $record->busquedaImportacion)
+                    ->url(
+                        fn($record) => $record->busquedaImportacion ?
+                        route('filament.admin.resources.busqueda-importacions.edit', $record->busquedaImportacion) :
+                        null
+                    ),
 
             ])
             ->toolbarActions([
