@@ -22,6 +22,7 @@ use Filament\Schemas\Components\Section;
 use Filament\Tables\Columns\ImageColumn;
 use App\Services\ImportarNegociosService;
 use App\Services\SincronizarListingService;
+use Filament\Forms\Components\CheckboxList;
 use App\Services\MapeoPlacesAListingService;
 
 class InstantaneaLugarsTable
@@ -287,6 +288,40 @@ class InstantaneaLugarsTable
                                     ->helperText('Elimina los demás resultados de esta búsqueda')
                                     ->inline(false),
                             ]),
+
+                        Section::make('🔒 Bloqueos Iniciales (Opcional)')
+                            ->description('Protege campos específicos desde el inicio para evitar que se sobrescriban en futuras sincronizaciones')
+                            ->schema([
+                                Toggle::make('aplicar_bloqueos_default')
+                                    ->label('Aplicar bloqueos por defecto')
+                                    ->default(false)
+                                    ->helperText('Bloquea campos sensibles: categorías, descripción, amenidades, fotos, videos, tags, SEO, etc.')
+                                    ->inline(false)
+                                    ->reactive(),
+
+                                CheckboxList::make('bloqueos_personalizados')
+                                    ->label('O selecciona campos específicos para bloquear')
+                                    ->options([
+                                        'name' => 'Nombre',
+                                        'address' => 'Dirección',
+                                        'phone' => 'Teléfono',
+                                        'email' => 'Email',
+                                        'website' => 'Sitio Web',
+                                        'description' => 'Descripción',
+                                        'categories' => 'Categorías',
+                                        'amenities' => 'Amenidades',
+                                        'photos' => 'Fotos',
+                                        'listing_thumbnail' => 'Miniatura',
+                                        'listing_cover' => 'Portada',
+                                        'tags' => 'Etiquetas',
+                                        'social' => 'Redes Sociales',
+                                    ])
+                                    ->columns(3)
+                                    ->gridDirection('row')
+                                    ->visible(fn(callable $get) => !$get('aplicar_bloqueos_default')),
+                            ])
+                            ->collapsible()
+                            ->collapsed(),
                     ])
                     ->action(function (array $data, $record) {
                         try {
@@ -395,6 +430,60 @@ class InstantaneaLugarsTable
                                 ->success()
                                 ->duration(5000)
                                 ->send();
+                                
+                            if (!empty($data['aplicar_bloqueos_default'])) {
+                                $camposDefault = [
+                                    'categories',
+                                    'description',
+                                    'amenities',
+                                    'photos',
+                                    'video_url',
+                                    'video_provider',
+                                    'tags',
+                                    'social',
+                                    'seo_meta_tags',
+                                    'meta_description',
+                                    'listing_type',
+                                    'listing_thumbnail',
+                                    'listing_cover',
+                                    'opened_minutes',
+                                    'closed_minutes',
+                                    'certifications',
+                                    'price_range',
+                                ];
+
+                                foreach ($camposDefault as $campo) {
+                                    \App\Models\BloqueoCampo::updateOrCreate(
+                                        [
+                                            'id_negocio_plataforma' => (int) $data['id_listing'],
+                                            'campo' => $campo
+                                        ],
+                                        ['bloqueado' => true]
+                                    );
+                                }
+
+                                \Log::info('Bloqueos por defecto aplicados', [
+                                    'listing_id' => $data['id_listing'],
+                                    'campos_bloqueados' => count($camposDefault),
+                                ]);
+                            }
+
+                            if (!empty($data['bloqueos_personalizados'])) {
+                                foreach ($data['bloqueos_personalizados'] as $campo) {
+                                    \App\Models\BloqueoCampo::updateOrCreate(
+                                        [
+                                            'id_negocio_plataforma' => (int) $data['id_listing'],
+                                            'campo' => $campo
+                                        ],
+                                        ['bloqueado' => true]
+                                    );
+                                }
+
+                                \Log::info('Bloqueos personalizados aplicados', [
+                                    'listing_id' => $data['id_listing'],
+                                    'campos' => $data['bloqueos_personalizados'],
+                                ]);
+                            }
 
                         } catch (\Exception $e) {
                             \Log::error('Error al vincular y descargar fotos', [
@@ -413,6 +502,7 @@ class InstantaneaLugarsTable
 
                             throw $e; // Re-lanzar para evitar commits parciales
                         }
+
                     }),
 
                 Action::make('extender_ttl')
