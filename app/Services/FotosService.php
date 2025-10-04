@@ -102,7 +102,7 @@ class FotosService
                     continue;
 
                 $attrib = ($photo['authorAttributions'][0] ?? []) ?: [];
-                $this->descargarFoto($placeId, $name, $ancho, 'full', $attrib);
+                $this->descargarFoto($placeId, $name, $ancho, 'thumb', $attrib);
 
                 if (++$count >= $maxPorLugar)
                     break;
