@@ -5,7 +5,12 @@ use App\Http\Controllers\FotoLocalController;
 use App\Http\Controllers\MediaController;
 
 Route::get('/', function () {
-    return view('welcome');
+    return redirect('/admin');
+});
+
+// Redirección de cualquier ruta inexistente al admin
+Route::fallback(function () {
+    return redirect('/admin');
 });
 
 
