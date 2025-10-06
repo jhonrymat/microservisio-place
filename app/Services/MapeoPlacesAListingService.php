@@ -41,13 +41,14 @@ class MapeoPlacesAListingService
         }
 
         // ========== RANGO DE PRECIOS ==========
-        // Google devuelve: PRICE_LEVEL_FREE, PRICE_LEVEL_INEXPENSIVE, PRICE_LEVEL_MODERATE, PRICE_LEVEL_EXPENSIVE, PRICE_LEVEL_VERY_EXPENSIVE
         $priceLevel = data_get($place, 'priceLevel');
         if ($priceLevel) {
             $out['price_range'] = $this->mapearPriceLevel($priceLevel);
         }
 
-        // ========== HORARIOS DE APERTURA ==========
+        // ========== HORARIOS DE APERTURA (SIMPLIFICADOS) ==========
+        // Solo guarda opened_minutes y closed_minutes para compatibilidad
+        // Los horarios completos se guardan en time_configuration por separado
         $openingHours = data_get($place, 'regularOpeningHours');
         if ($openingHours) {
             $out['opened_minutes'] = $this->extraerMinutosApertura($openingHours);
@@ -60,6 +61,15 @@ class MapeoPlacesAListingService
             $out['status'] = $this->mapearBusinessStatus($businessStatus);
         }
 
+        // ========== EMAIL (No viene en la API, pero dejamos el campo) ==========
+        // Google Places API no provee email directamente
+        // Se podría extraer del website o dejarlo null
+
+        // ========== REDES SOCIALES ==========
+        // Google Places no provee redes sociales directamente
+        // Podrías intentar extraerlas del website o dejarlas null
+        // El campo 'social' espera JSON: {"facebook": "url", "instagram": "url", ...}
+
         // ========== FOTOS ==========
         $placeId = (string) data_get($place, 'id');
         if ($placeId) {
@@ -70,10 +80,118 @@ class MapeoPlacesAListingService
         $types = data_get($place, 'types', []);
         if (!empty($types)) {
             $out['google_types'] = json_encode($types);
-            // Aquí podrías mapear a tus categorías internas si tienes MapaCategoria
+            // Aquí podrías mapear a tus categorías internas
         }
 
+        // ========== CAMPOS ADICIONALES ==========
+        // Google Analytics ID - no viene de Google Places
+        // Package Expiry Date - gestión interna
+        // Certifications - gestión interna
+        // Featured - gestión interna
+
         return array_filter($out, fn($value) => $value !== null);
+    }
+
+    /**
+     * Extrae y formatea los horarios para la tabla time_configuration
+     *
+     * @param array $place Datos del lugar
+     * @return array Horarios formateados para time_configuration
+     */
+    public function extraerHorariosParaConfiguracion(array $place): array
+    {
+        $openingHours = data_get($place, 'regularOpeningHours');
+
+        if (empty($openingHours)) {
+            return [];
+        }
+
+        $weekdayDescriptions = data_get($openingHours, 'weekdayDescriptions', []);
+
+        // Inicializar todos los días como NULL
+        $horarios = [
+            'monday' => null,
+            'tuesday' => null,
+            'wednesday' => null,
+            'thursday' => null,
+            'friday' => null,
+            'saturday' => null,
+            'sunday' => null,
+        ];
+
+        // Mapear los días de Google al formato de la tabla
+        $diasMap = [
+            'Monday' => 'monday',
+            'Tuesday' => 'tuesday',
+            'Wednesday' => 'wednesday',
+            'Thursday' => 'thursday',
+            'Friday' => 'friday',
+            'Saturday' => 'saturday',
+            'Sunday' => 'sunday',
+        ];
+
+        foreach ($weekdayDescriptions as $descripcion) {
+            // Formato: "Monday: 8:00 AM – 6:00 PM" o "Sunday: Closed"
+            foreach ($diasMap as $diaIngles => $diaCampo) {
+                if (stripos($descripcion, $diaIngles) === 0) {
+                    // Extraer la parte después del ":"
+                    $partes = explode(':', $descripcion, 2);
+                    if (count($partes) === 2) {
+                        $horario = trim($partes[1]);
+                        // Si dice "Closed", dejar como NULL
+                        $horarios[$diaCampo] = (stripos($horario, 'Closed') !== false) ? null : $horario;
+                    }
+                    break;
+                }
+            }
+        }
+
+        return $horarios;
+    }
+
+    /**
+     * Guarda los horarios en la tabla time_configuration
+     *
+     * @param int $listingId ID del listing
+     * @param array $place Datos del lugar de Google
+     * @return void
+     */
+    public function guardarHorarios(int $listingId, array $place): void
+    {
+        $horarios = $this->extraerHorariosParaConfiguracion($place);
+
+        if (empty($horarios)) {
+            return;
+        }
+
+        // Agregar el listing_id
+        $horarios['listing_id'] = $listingId;
+
+        // Usar la conexión de platform
+        $conn = \DB::connection('platform');
+
+        // Verificar si ya existe un registro
+        $existe = $conn->table('time_configuration')
+            ->where('listing_id', $listingId)
+            ->exists();
+
+        if ($existe) {
+            // Actualizar
+            $conn->table('time_configuration')
+                ->where('listing_id', $listingId)
+                ->update($horarios);
+
+            \Log::info('Horarios actualizados en time_configuration', [
+                'listing_id' => $listingId
+            ]);
+        } else {
+            // Insertar
+            $conn->table('time_configuration')->insert($horarios);
+
+            \Log::info('Horarios insertados en time_configuration', [
+                'listing_id' => $listingId
+            ]);
+        }
     }
 
     /**
@@ -97,13 +215,10 @@ class MapeoPlacesAListingService
         }
 
         // ========== THUMBNAIL Y COVER (Con selección manual) ==========
-
-        // Si el admin seleccionó imágenes específicas, usarlas
         if (!empty($opciones['thumbnail_id'])) {
             $thumb = \App\Models\FotoLocal::find($opciones['thumbnail_id']);
             $out['listing_thumbnail'] = $thumb ? route('media.local', $thumb->id) : null;
         } else {
-            // Comportamiento por defecto: primera thumb
             $thumbs = $fotosSvc->construirUrlsFotos($placeId, 'thumb', 1);
             $out['listing_thumbnail'] = $thumbs[0] ?? null;
         }
@@ -112,7 +227,6 @@ class MapeoPlacesAListingService
             $cover = \App\Models\FotoLocal::find($opciones['cover_id']);
             $out['listing_cover'] = $cover ? route('media.local', $cover->id) : null;
         } else {
-            // Comportamiento por defecto: primera cover
             $covers = $fotosSvc->construirUrlsFotos($placeId, 'cover', 1);
             $out['listing_cover'] = $covers[0] ?? null;
         }
@@ -148,7 +262,6 @@ class MapeoPlacesAListingService
 
     /**
      * Extrae los minutos de apertura desde regularOpeningHours
-     * Retorna el horario de apertura más común (lunes)
      */
     protected function extraerMinutosApertura(array $openingHours): ?int
     {
@@ -158,10 +271,10 @@ class MapeoPlacesAListingService
             return null;
         }
 
-        // Buscar el primer período de lunes (día 0 en Google)
+        // Buscar el primer período de lunes (día 1 en Google Places API v1)
         foreach ($periods as $period) {
             $open = data_get($period, 'open');
-            if ($open && data_get($open, 'day') === 0) { // Lunes
+            if ($open && data_get($open, 'day') === 1) { // Lunes
                 $hour = data_get($open, 'hour', 0);
                 $minute = data_get($open, 'minute', 0);
                 return ($hour * 60) + $minute;
@@ -193,7 +306,7 @@ class MapeoPlacesAListingService
         // Buscar el primer período de lunes
         foreach ($periods as $period) {
             $close = data_get($period, 'close');
-            if ($close && data_get($period, 'open.day') === 0) {
+            if ($close && data_get($period, 'open.day') === 1) {
                 $hour = data_get($close, 'hour', 0);
                 $minute = data_get($close, 'minute', 0);
                 return ($hour * 60) + $minute;
@@ -209,47 +322,5 @@ class MapeoPlacesAListingService
         }
 
         return null;
-    }
-
-    /**
-     * Obtiene todas las fotos disponibles para selección
-     * Útil para el selector de imágenes en la UI
-     */
-    public function obtenerFotosParaSeleccion(string $placeId): array
-    {
-        $fotos = \App\Models\FotoLocal::where('place_id', $placeId)
-            ->orderBy('id')
-            ->get()
-            ->groupBy('size_label');
-
-        return [
-            'thumbs' => $fotos->get('thumb', collect())->map(function($foto) {
-                return [
-                    'id' => $foto->id,
-                    'url' => route('media.local', $foto->id),
-                    'width' => $foto->width,
-                    'height' => $foto->height,
-                    'author' => $foto->author_name,
-                ];
-            })->toArray(),
-            'covers' => $fotos->get('cover', collect())->map(function($foto) {
-                return [
-                    'id' => $foto->id,
-                    'url' => route('media.local', $foto->id),
-                    'width' => $foto->width,
-                    'height' => $foto->height,
-                    'author' => $foto->author_name,
-                ];
-            })->toArray(),
-            'fulls' => $fotos->get('full', collect())->map(function($foto) {
-                return [
-                    'id' => $foto->id,
-                    'url' => route('media.local', $foto->id),
-                    'width' => $foto->width,
-                    'height' => $foto->height,
-                    'author' => $foto->author_name,
-                ];
-            })->toArray(),
-        ];
     }
 }

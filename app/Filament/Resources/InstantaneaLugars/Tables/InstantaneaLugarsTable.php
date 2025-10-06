@@ -409,11 +409,11 @@ class InstantaneaLugarsTable
 
                         // ========== PASO 2: SELECCIÓN DE IMÁGENES ==========
                         // ========== PASO 2: SELECCIÓN DE IMÁGENES CON RADIO BUTTONS ==========
-Step::make('Selección de Imágenes')
-    ->schema([
-        \Filament\Forms\Components\Placeholder::make('info_seleccion')
-            ->content(new \Illuminate\Support\HtmlString(
-                '<div class="bg-blue-50 dark:bg-blue-950 p-4 rounded-lg mb-4">
+                        Step::make('Selección de Imágenes')
+                            ->schema([
+                                \Filament\Forms\Components\Placeholder::make('info_seleccion')
+                                    ->content(new \Illuminate\Support\HtmlString(
+                                        '<div class="bg-blue-50 dark:bg-blue-950 p-4 rounded-lg mb-4">
                     <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-2">
                         📸 Selecciona las Imágenes para el Listing
                     </h3>
@@ -421,33 +421,34 @@ Step::make('Selección de Imágenes')
                         Selecciona una imagen de cada sección. Si no seleccionas ninguna, se usará la primera automáticamente.
                     </p>
                 </div>'
-            )),
+                                    )),
 
-        Section::make('🖼️ Thumbnail (Miniatura)')
-            ->description('Imagen pequeña que se muestra en listados y tarjetas (400px)')
-            ->schema([
-                \Filament\Forms\Components\Radio::make('thumbnail_id')
-                    ->label('Selecciona un Thumbnail')
-                    ->options(function ($record) {
-                        if (!$record) return [];
+                                Section::make('🖼️ Thumbnail (Miniatura)')
+                                    ->description('Imagen pequeña que se muestra en listados y tarjetas (400px)')
+                                    ->schema([
+                                        \Filament\Forms\Components\Radio::make('thumbnail_id')
+                                            ->label('Selecciona un Thumbnail')
+                                            ->options(function ($record) {
+                                                if (!$record)
+                                                    return [];
 
-                        $fotos = FotoLocal::where('place_id', $record->id_lugar)
-                            ->where('size_label', 'thumb')
-                            ->orderBy('id')
-                            ->limit(12)
-                            ->get();
+                                                $fotos = FotoLocal::where('place_id', $record->id_lugar)
+                                                    ->where('size_label', 'thumb')
+                                                    ->orderBy('id')
+                                                    ->limit(12)
+                                                    ->get();
 
-                        if ($fotos->isEmpty()) {
-                            return ['sin_fotos' => 'No hay thumbnails disponibles'];
-                        }
+                                                if ($fotos->isEmpty()) {
+                                                    return ['sin_fotos' => 'No hay thumbnails disponibles'];
+                                                }
 
-                        return $fotos->mapWithKeys(function ($foto, $index) {
-                            $number = $index + 1;
-                            $author = $foto->author_name ? ' • © ' . \Illuminate\Support\Str::limit($foto->author_name, 20) : '';
+                                                return $fotos->mapWithKeys(function ($foto, $index) {
+                                                    $number = $index + 1;
+                                                    $author = $foto->author_name ? ' • © ' . \Illuminate\Support\Str::limit($foto->author_name, 20) : '';
 
-                            return [
-                                $foto->id => new \Illuminate\Support\HtmlString(
-                                    '<div class="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 transition">
+                                                    return [
+                                                        $foto->id => new \Illuminate\Support\HtmlString(
+                                                            '<div class="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 transition">
                                         <img src="' . route('media.local', $foto->id) . '"
                                              class="w-24 h-24 object-cover rounded border border-gray-200 dark:border-gray-700 flex-shrink-0"
                                              loading="lazy" />
@@ -460,42 +461,43 @@ Step::make('Selección de Imágenes')
                                             </p>
                                         </div>
                                     </div>'
-                                )
-                            ];
-                        })->toArray();
-                    })
-                    ->default(null)
-                    ->dehydrated(true)
-                    ->helperText('Deja sin seleccionar para usar la primera imagen automáticamente'),
-            ])
-            ->collapsible()
-            ->collapsed(false),
+                                                        )
+                                                    ];
+                                                })->toArray();
+                                            })
+                                            ->default(null)
+                                            ->dehydrated(true)
+                                            ->helperText('Deja sin seleccionar para usar la primera imagen automáticamente'),
+                                    ])
+                                    ->collapsible()
+                                    ->collapsed(false),
 
-        Section::make('🎨 Cover (Portada)')
-            ->description('Imagen grande que se muestra en la cabecera del listing (1200px)')
-            ->schema([
-                \Filament\Forms\Components\Radio::make('cover_id')
-                    ->label('Selecciona un Cover')
-                    ->options(function ($record) {
-                        if (!$record) return [];
+                                Section::make('🎨 Cover (Portada)')
+                                    ->description('Imagen grande que se muestra en la cabecera del listing (1200px)')
+                                    ->schema([
+                                        \Filament\Forms\Components\Radio::make('cover_id')
+                                            ->label('Selecciona un Cover')
+                                            ->options(function ($record) {
+                                                if (!$record)
+                                                    return [];
 
-                        $fotos = FotoLocal::where('place_id', $record->id_lugar)
-                            ->where('size_label', 'cover')
-                            ->orderBy('id')
-                            ->limit(12)
-                            ->get();
+                                                $fotos = FotoLocal::where('place_id', $record->id_lugar)
+                                                    ->where('size_label', 'cover')
+                                                    ->orderBy('id')
+                                                    ->limit(12)
+                                                    ->get();
 
-                        if ($fotos->isEmpty()) {
-                            return ['sin_fotos' => 'No hay covers disponibles'];
-                        }
+                                                if ($fotos->isEmpty()) {
+                                                    return ['sin_fotos' => 'No hay covers disponibles'];
+                                                }
 
-                        return $fotos->mapWithKeys(function ($foto, $index) {
-                            $number = $index + 1;
-                            $author = $foto->author_name ? ' • © ' . \Illuminate\Support\Str::limit($foto->author_name, 20) : '';
+                                                return $fotos->mapWithKeys(function ($foto, $index) {
+                                                    $number = $index + 1;
+                                                    $author = $foto->author_name ? ' • © ' . \Illuminate\Support\Str::limit($foto->author_name, 20) : '';
 
-                            return [
-                                $foto->id => new \Illuminate\Support\HtmlString(
-                                    '<div class="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 transition">
+                                                    return [
+                                                        $foto->id => new \Illuminate\Support\HtmlString(
+                                                            '<div class="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 transition">
                                         <img src="' . route('media.local', $foto->id) . '"
                                              class="w-32 h-24 object-cover rounded border border-gray-200 dark:border-gray-700 flex-shrink-0"
                                              loading="lazy" />
@@ -508,28 +510,20 @@ Step::make('Selección de Imágenes')
                                             </p>
                                         </div>
                                     </div>'
-                                )
-                            ];
-                        })->toArray();
-                    })
-                    ->default(null)
-                    ->dehydrated(true)
-                    ->helperText('Deja sin seleccionar para usar la primera imagen automáticamente'),
-            ])
-            ->collapsible()
-            ->collapsed(false),
-    ])
-    ->visible(fn(callable $get) => $get('seleccionar_imagenes_manualmente') && $get('descargar_fotos')),
+                                                        )
+                                                    ];
+                                                })->toArray();
+                                            })
+                                            ->default(null)
+                                            ->dehydrated(true)
+                                            ->helperText('Deja sin seleccionar para usar la primera imagen automáticamente'),
+                                    ])
+                                    ->collapsible()
+                                    ->collapsed(false),
+                            ])
+                            ->visible(fn(callable $get) => $get('seleccionar_imagenes_manualmente') && $get('descargar_fotos')),
                     ])
                     ->action(function (array $data, $record) {
-                        // ========== DEBUG TEMPORAL ==========
-                        \Log::info('🔍 DEBUG: Data completa', [
-                            'thumbnail_id' => $data['thumbnail_id'] ?? 'NO PRESENTE',
-                            'cover_id' => $data['cover_id'] ?? 'NO PRESENTE',
-                            'seleccion_manual' => $data['seleccionar_imagenes_manualmente'] ?? false,
-                            'todas_las_keys' => array_keys($data),
-                        ]);
-                        // ========== FIN DEBUG ==========
                         try {
                             $svc = app(ImportarNegociosService::class);
                             $fotosService = app(FotosService::class);
@@ -543,23 +537,20 @@ Step::make('Selección de Imágenes')
                             // 1) LIMPIAR FOTOS DEL LOTE (EXCLUYENDO EL LUGAR ACTUAL)
                             if (!empty($data['limpiar_lote']) && $record->batch_token) {
                                 DB::transaction(function () use ($record, $fotosService) {
-                                    // ✅ Obtener SOLO los otros lugares del lote (sin el actual)
                                     $otrosPlaceIds = InstantaneaLugar::where('batch_token', $record->batch_token)
-                                        ->where('id_lugar', '<>', $record->id_lugar)  // ✅ EXCLUIR el actual
+                                        ->where('id_lugar', '<>', $record->id_lugar)
                                         ->pluck('id_lugar');
 
-                                    // Eliminar fotos solo de los otros lugares
                                     if ($otrosPlaceIds->isNotEmpty()) {
                                         $fotosService->eliminarFotosDeVariosLugares($otrosPlaceIds->toArray());
 
-                                        \Log::info('Fotos del lote eliminadas (excepto lugar actual)', [
+                                        \Log::info('Fotos del lote eliminadas', [
                                             'batch_token' => $record->batch_token,
                                             'lugar_actual' => $record->id_lugar,
                                             'otros_eliminados' => $otrosPlaceIds->count()
                                         ]);
                                     }
 
-                                    // Eliminar registros de InstantaneaLugar de los otros
                                     if ($otrosPlaceIds->isNotEmpty()) {
                                         InstantaneaLugar::where('batch_token', $record->batch_token)
                                             ->where('id_lugar', '<>', $record->id_lugar)
@@ -577,16 +568,11 @@ Step::make('Selección de Imágenes')
                             $descargarFotos = !empty($data['descargar_fotos']);
 
                             if ($descargarFotos && !empty($det['photos'])) {
-                                // Verificar si ya existen fotos descargadas (del toggle en Paso 1)
                                 $fotosExistentes = FotoLocal::where('place_id', $record->id_lugar)
                                     ->whereIn('size_label', ['thumb', 'cover', 'full'])
                                     ->exists();
 
-                                // Solo descargar si:
-                                // - NO existen fotos previas, O
-                                // - NO se usó selección manual (porque en ese caso ya se descargaron)
                                 if (!$fotosExistentes || !$seleccionManual) {
-                                    // Limitar cantidad de fotos si se especificó
                                     if ((int) $data['max_fotos'] > 0) {
                                         $det['photos'] = array_slice($det['photos'], 0, (int) $data['max_fotos']);
                                     }
@@ -603,12 +589,6 @@ Step::make('Selección de Imágenes')
                                     \Log::info('Fotos descargadas en action()', [
                                         'place_id' => $record->id_lugar,
                                         'cantidad' => count($det['photos']),
-                                        'motivo' => !$fotosExistentes ? 'no_existian' : 'sin_seleccion_manual'
-                                    ]);
-                                } else {
-                                    \Log::info('Fotos NO re-descargadas (ya existen del Paso 1)', [
-                                        'place_id' => $record->id_lugar,
-                                        'seleccion_manual' => $seleccionManual
                                     ]);
                                 }
                             }
@@ -616,20 +596,32 @@ Step::make('Selección de Imágenes')
                             // 4) MAPEAR Y SINCRONIZAR (con imágenes seleccionadas)
                             $opcionesMapeo = [];
 
-                            // Pasar IDs de imágenes seleccionadas manualmente
                             if (!empty($data['thumbnail_id'])) {
                                 $opcionesMapeo['thumbnail_id'] = $data['thumbnail_id'];
-                                \Log::info('Usando thumbnail seleccionado', ['id' => $data['thumbnail_id']]);
                             }
                             if (!empty($data['cover_id'])) {
                                 $opcionesMapeo['cover_id'] = $data['cover_id'];
-                                \Log::info('Usando cover seleccionado', ['id' => $data['cover_id']]);
                             }
 
-                            $map = app(MapeoPlacesAListingService::class)->mapear($det, $opcionesMapeo);
+                            $mapeoService = app(MapeoPlacesAListingService::class);
+                            $map = $mapeoService->mapear($det, $opcionesMapeo);
                             app(SincronizarListingService::class)->aplicar((int) $data['id_listing'], $map, 'places_sync');
 
-                            // 5) APLICAR BLOQUEOS
+                            // 5) GUARDAR HORARIOS EN time_configuration
+                            try {
+                                $mapeoService->guardarHorarios((int) $data['id_listing'], $det);
+                                \Log::info('Horarios guardados exitosamente', [
+                                    'listing_id' => $data['id_listing']
+                                ]);
+                            } catch (\Exception $e) {
+                                // No fallar la vinculación si falla el guardado de horarios
+                                \Log::error('Error al guardar horarios', [
+                                    'listing_id' => $data['id_listing'],
+                                    'error' => $e->getMessage()
+                                ]);
+                            }
+
+                            // 6) APLICAR BLOQUEOS
                             if (!empty($data['aplicar_bloqueos_default'])) {
                                 $camposDefault = [
                                     'categories',
@@ -666,7 +658,7 @@ Step::make('Selección de Imágenes')
                                 }
                             }
 
-                            // Notificación mejorada con información de imágenes
+                            // Notificación mejorada
                             $mensajeImagenes = '';
                             if ($seleccionManual && (!empty($data['thumbnail_id']) || !empty($data['cover_id']))) {
                                 $partes = [];
