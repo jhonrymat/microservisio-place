@@ -20,6 +20,7 @@ use Filament\Tables\Actions\EditAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
+use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\Section;
 use Filament\Tables\Columns\ImageColumn;
 use App\Services\ImportarNegociosService;
@@ -241,8 +242,29 @@ class InstantaneaLugarsTable
                                     ->collapsible()
                                     ->collapsed(),
 
+                                // En el Section "⚙️ Opciones de Sincronización", AÑADE estos campos al inicio:
+
                                 Section::make('⚙️ Opciones de Sincronización')
                                     ->schema([
+                                        // ===== ALERTA VISIBLE DURANTE LA DESCARGA =====
+                                        \Filament\Forms\Components\Placeholder::make('alerta_descargando')
+                                            ->label('')
+                                            ->content(new \Illuminate\Support\HtmlString(
+                                                '<div class="rounded-lg bg-blue-600 text-white p-4 border-2 border-blue-700 shadow-lg">
+                                                            <div class="flex items-center gap-3">
+                                                                <svg class="animate-spin h-6 w-6 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                                </svg>
+                                                                <div class="flex-1">
+                                                                    <p class="text-sm font-bold">⏳ Descargando imágenes...</p>
+                                                                    <p class="text-xs mt-1 opacity-90">Por favor espera. No cierres esta ventana ni navegues a otro paso.</p>
+                                                                </div>
+                                                            </div>
+                                                        </div>'
+                                            ))
+                                            ->visible(fn(callable $get) => $get('fotos_descargando') === true),
+
                                         Toggle::make('descargar_fotos')
                                             ->label('Descargar fotos en alta calidad')
                                             ->default(true)
@@ -280,20 +302,50 @@ class InstantaneaLugarsTable
                                             ->visible(fn(callable $get) => $get('descargar_fotos'))
                                             ->disabled(fn(callable $get) => $get('fotos_descargando'))
                                             ->afterStateUpdated(function ($state, callable $get, callable $set, $record) {
-                                                // Solo procesar si se ACTIVA el toggle
                                                 if ($state && $get('descargar_fotos') && $record) {
                                                     try {
+                                                        // VERIFICAR SI YA EXISTEN FOTOS
+                                                        $fotosExistentes = FotoLocal::where('place_id', $record->id_lugar)
+                                                            ->whereIn('size_label', ['thumb', 'cover', 'full'])
+                                                            ->count();
+
+                                                        if ($fotosExistentes > 0) {
+                                                            \Log::info('Fotos existentes detectadas', [
+                                                                'place_id' => $record->id_lugar,
+                                                                'cantidad' => $fotosExistentes
+                                                            ]);
+
+                                                            // Ya hay fotos, no descargar nuevamente
+                                                            Notification::make()
+                                                                ->title('ℹ️ Fotos ya descargadas')
+                                                                ->body("Ya existen {$fotosExistentes} imágenes descargadas para este lugar. Puedes continuar al siguiente paso para seleccionarlas.")
+                                                                ->info()
+                                                                ->duration(8000)
+                                                                ->send();
+
+                                                            return; // No descargar
+                                                        }
+
+                                                        // BLOQUEAR UI INMEDIATAMENTE
+                                                        $set('fotos_descargando', true);
+
+                                                        // NOTIFICAR INICIO DE DESCARGA
+                                                        Notification::make()
+                                                            ->title('🚀 Iniciando descarga de fotos...')
+                                                            ->body('Esto puede tardar unos segundos dependiendo de la cantidad de imágenes.')
+                                                            ->info()
+                                                            ->duration(5000)
+                                                            ->send();
+
                                                         $fotosService = app(FotosService::class);
                                                         $svc = app(ImportarNegociosService::class);
 
-                                                        // Obtener detalles del lugar
                                                         $det = $svc->obtenerDetalles($record->id_lugar);
 
                                                         if (empty($det) || empty($det['photos'])) {
                                                             throw new \Exception('No se encontraron fotos para este lugar');
                                                         }
 
-                                                        // Limitar fotos si se especificó
                                                         $maxFotos = (int) $get('max_fotos');
                                                         $cantidadOriginal = count($det['photos']);
 
@@ -309,11 +361,7 @@ class InstantaneaLugarsTable
                                                             'cantidad_a_descargar' => $cantidadADescargar,
                                                         ]);
 
-                                                        // NOTA: Marcamos como descargando, pero la UI se actualizará
-                                                        // solo DESPUÉS de que termine este callback completo
-                                                        $set('fotos_descargando', true);
-
-                                                        // Descargar fotos en alta calidad
+                                                        // DESCARGAR FOTOS
                                                         $fotosService->importarFotosDeLugarSeleccionado(
                                                             $det,
                                                             [
@@ -331,16 +379,16 @@ class InstantaneaLugarsTable
                                                         // DESBLOQUEAR UI
                                                         $set('fotos_descargando', false);
 
-                                                        // Notificar éxito
+                                                        // NOTIFICAR ÉXITO
                                                         Notification::make()
-                                                            ->title('✅ Fotos descargadas')
-                                                            ->body("Se descargaron {$cantidadADescargar} imágenes exitosamente. Ya puedes continuar al siguiente paso.")
+                                                            ->title('✅ Descarga completada')
+                                                            ->body("Se descargaron {$cantidadADescargar} imágenes exitosamente. Ahora puedes continuar al siguiente paso.")
                                                             ->success()
                                                             ->duration(5000)
                                                             ->send();
 
                                                     } catch (\Exception $e) {
-                                                        // DESBLOQUEAR UI en caso de error
+                                                        // DESBLOQUEAR UI
                                                         $set('fotos_descargando', false);
 
                                                         \Log::error('Error al descargar fotos anticipadamente', [
@@ -350,24 +398,111 @@ class InstantaneaLugarsTable
                                                         ]);
 
                                                         Notification::make()
-                                                            ->title('❌ Error al descargar fotos')
+                                                            ->title('❌ Error en la descarga')
                                                             ->body('No se pudieron descargar las fotos: ' . $e->getMessage())
                                                             ->danger()
                                                             ->duration(8000)
                                                             ->send();
 
-                                                        // Desactivar la selección manual si falló
+                                                        // Desactivar el toggle
                                                         $set('seleccionar_imagenes_manualmente', false);
                                                     }
                                                 }
 
-                                                // Si se DESACTIVA, limpiar las selecciones
+                                                // Si se DESACTIVA el toggle
                                                 if (!$state) {
                                                     $set('thumbnail_id', null);
                                                     $set('cover_id', null);
                                                     $set('fotos_descargando', false);
                                                 }
                                             }),
+
+                                        // ===== BOTÓN PARA RE-DESCARGAR FOTOS (Opcional) =====
+                                        Actions::make([
+                                            Action::make('reemplazar_fotos')
+                                                ->label('Reemplazar fotos existentes')
+                                                ->color('warning')
+                                                ->icon('heroicon-o-arrow-path')
+                                                ->requiresConfirmation()
+                                                ->modalHeading('¿Reemplazar fotos existentes?')
+                                                ->modalDescription('Se eliminarán todas las fotos actuales y se descargarán nuevas. Esta acción no se puede deshacer.')
+                                                ->modalSubmitActionLabel('Sí, reemplazar')
+                                                ->action(function (callable $get, callable $set, $record) {
+                                                    try {
+                                                        $set('fotos_descargando', true);
+
+                                                        Notification::make()
+                                                            ->title('🔄 Reemplazando fotos...')
+                                                            ->body('Eliminando fotos antiguas y descargando nuevas.')
+                                                            ->info()
+                                                            ->duration(5000)
+                                                            ->send();
+
+                                                        // ELIMINAR FOTOS EXISTENTES
+                                                        $fotosService = app(FotosService::class);
+                                                        $fotosService->eliminarFotosDeVariosLugares([$record->id_lugar]);
+
+                                                        \Log::info('Fotos eliminadas para re-descarga', [
+                                                            'place_id' => $record->id_lugar
+                                                        ]);
+
+                                                        // DESCARGAR NUEVAS FOTOS
+                                                        $svc = app(ImportarNegociosService::class);
+                                                        $det = $svc->obtenerDetalles($record->id_lugar);
+
+                                                        if (empty($det) || empty($det['photos'])) {
+                                                            throw new \Exception('No se encontraron fotos');
+                                                        }
+
+                                                        $maxFotos = (int) $get('max_fotos');
+                                                        if ($maxFotos > 0) {
+                                                            $det['photos'] = array_slice($det['photos'], 0, $maxFotos);
+                                                        }
+
+                                                        $fotosService->importarFotosDeLugarSeleccionado(
+                                                            $det,
+                                                            [
+                                                                ['label' => 'thumb', 'w' => 400],
+                                                                ['label' => 'cover', 'w' => 1200],
+                                                                ['label' => 'full', 'w' => 2048],
+                                                            ]
+                                                        );
+
+                                                        $set('fotos_descargando', false);
+
+                                                        Notification::make()
+                                                            ->title('✅ Fotos reemplazadas')
+                                                            ->body('Las fotos han sido reemplazadas exitosamente.')
+                                                            ->success()
+                                                            ->send();
+
+                                                    } catch (\Exception $e) {
+                                                        $set('fotos_descargando', false);
+
+                                                        \Log::error('Error al reemplazar fotos', [
+                                                            'error' => $e->getMessage(),
+                                                            'place_id' => $record->id_lugar ?? null,
+                                                        ]);
+
+                                                        Notification::make()
+                                                            ->title('❌ Error')
+                                                            ->body($e->getMessage())
+                                                            ->danger()
+                                                            ->send();
+                                                    }
+                                                })
+                                                ->visible(function ($record, callable $get) {
+                                                    if (!$record || $get('fotos_descargando')) {
+                                                        return false;
+                                                    }
+
+                                                    $fotosCount = FotoLocal::where('place_id', $record->id_lugar)
+                                                        ->whereIn('size_label', ['thumb', 'cover', 'full'])
+                                                        ->count();
+
+                                                    return $fotosCount > 0;
+                                                }),
+                                        ]),
                                     ])
                                     ->collapsible(),
 

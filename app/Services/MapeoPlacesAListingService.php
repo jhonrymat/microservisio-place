@@ -94,6 +94,7 @@ class MapeoPlacesAListingService
 
     /**
      * Extrae y formatea los horarios para la tabla time_configuration
+     * Convierte de formato Google ("8:00 AM – 6:00 PM") a formato plataforma ("8:00-18:00")
      *
      * @param array $place Datos del lugar
      * @return array Horarios formateados para time_configuration
@@ -131,15 +132,22 @@ class MapeoPlacesAListingService
         ];
 
         foreach ($weekdayDescriptions as $descripcion) {
-            // Formato: "Monday: 8:00 AM – 6:00 PM" o "Sunday: Closed"
+            // Formato de Google: "Monday: 8:00 AM – 6:00 PM" o "Sunday: Closed"
             foreach ($diasMap as $diaIngles => $diaCampo) {
                 if (stripos($descripcion, $diaIngles) === 0) {
                     // Extraer la parte después del ":"
                     $partes = explode(':', $descripcion, 2);
                     if (count($partes) === 2) {
                         $horario = trim($partes[1]);
+
                         // Si dice "Closed", dejar como NULL
-                        $horarios[$diaCampo] = (stripos($horario, 'Closed') !== false) ? null : $horario;
+                        if (stripos($horario, 'Closed') !== false) {
+                            $horarios[$diaCampo] = null;
+                        } else {
+                            // Convertir de "8:00 AM – 6:00 PM" a "8:00-18:00"
+                            $horarioConvertido = $this->convertirHorarioAFormato24h($horario);
+                            $horarios[$diaCampo] = $horarioConvertido;
+                        }
                     }
                     break;
                 }
@@ -147,6 +155,107 @@ class MapeoPlacesAListingService
         }
 
         return $horarios;
+    }
+
+    /**
+     * Convierte horario de formato 12h a 24h
+     * Entrada: "8:00 AM – 6:00 PM" o "8:00 AM - 6:00 PM"
+     * Salida: "8:00-18:00"
+     *
+     * @param string $horario
+     * @return string|null
+     */
+    protected function convertirHorarioAFormato24h(string $horario): ?string
+    {
+        try {
+            // Reemplazar diferentes tipos de guiones/separadores por uno estándar
+            $horario = str_replace(['–', '—', ' - '], '-', $horario);
+
+            // Dividir por el guión
+            $partes = explode('-', $horario);
+
+            if (count($partes) !== 2) {
+                \Log::warning('Formato de horario no esperado', ['horario' => $horario]);
+                return null;
+            }
+
+            $apertura = trim($partes[0]);
+            $cierre = trim($partes[1]);
+
+            // Convertir ambas partes a formato 24h
+            $aperturaConvertida = $this->convertirHora12a24($apertura);
+            $cierreConvertida = $this->convertirHora12a24($cierre);
+
+            if ($aperturaConvertida === null || $cierreConvertida === null) {
+                return null;
+            }
+
+            // Formato final: "8:00-18:00"
+            return $aperturaConvertida . '-' . $cierreConvertida;
+
+        } catch (\Exception $e) {
+            \Log::error('Error al convertir horario', [
+                'horario' => $horario,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Convierte una hora individual de 12h a 24h
+     * Entrada: "8:00 AM" o "6:00 PM"
+     * Salida: "8:00" o "18:00"
+     *
+     * @param string $hora
+     * @return string|null
+     */
+    protected function convertirHora12a24(string $hora): ?string
+    {
+        try {
+            $hora = trim($hora);
+
+            // Determinar si es AM o PM
+            $esAM = stripos($hora, 'AM') !== false;
+            $esPM = stripos($hora, 'PM') !== false;
+
+            if (!$esAM && !$esPM) {
+                \Log::warning('Formato de hora sin AM/PM', ['hora' => $hora]);
+                return null;
+            }
+
+            // Remover AM/PM y espacios
+            $horaSinPeriodo = trim(str_ireplace(['AM', 'PM'], '', $hora));
+
+            // Separar hora y minutos
+            $partes = explode(':', $horaSinPeriodo);
+
+            if (count($partes) !== 2) {
+                \Log::warning('Formato de hora inválido', ['hora' => $hora]);
+                return null;
+            }
+
+            $horas = (int) $partes[0];
+            $minutos = (int) $partes[1];
+
+            // Convertir a formato 24h
+            if ($esPM && $horas !== 12) {
+                $horas += 12;
+            } elseif ($esAM && $horas === 12) {
+                // 12:00 AM es medianoche (00:00)
+                $horas = 0;
+            }
+
+            // Formatear con ceros a la izquierda si es necesario
+            return sprintf('%d:%02d', $horas, $minutos);
+
+        } catch (\Exception $e) {
+            \Log::error('Error al convertir hora individual', [
+                'hora' => $hora,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
     }
 
     /**
@@ -237,7 +346,7 @@ class MapeoPlacesAListingService
      */
     protected function mapearPriceLevel(string $priceLevel): string
     {
-        return match($priceLevel) {
+        return match ($priceLevel) {
             'PRICE_LEVEL_FREE' => 'free',
             'PRICE_LEVEL_INEXPENSIVE' => 'inexpensive',
             'PRICE_LEVEL_MODERATE' => 'moderate',
@@ -252,7 +361,7 @@ class MapeoPlacesAListingService
      */
     protected function mapearBusinessStatus(string $businessStatus): string
     {
-        return match($businessStatus) {
+        return match ($businessStatus) {
             'OPERATIONAL' => 'active',
             'CLOSED_TEMPORARILY' => 'inactive',
             'CLOSED_PERMANENTLY' => 'deleted',
