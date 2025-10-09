@@ -109,11 +109,6 @@ class MapeoPlacesAListingService
 
         $weekdayDescriptions = data_get($openingHours, 'weekdayDescriptions', []);
 
-        // ⚠️ NUEVO: Si no hay descripciones, no hay datos de horarios
-        if (empty($weekdayDescriptions)) {
-            return [];
-        }
-
         // Inicializar todos los días como NULL
         $horarios = [
             'monday' => null,
