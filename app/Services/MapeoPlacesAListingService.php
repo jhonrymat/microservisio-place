@@ -136,6 +136,8 @@ class MapeoPlacesAListingService
             foreach ($diasMap as $diaIngles => $diaCampo) {
                 if (stripos($descripcion, $diaIngles) === 0) {
                     // Extraer la parte después del ":"
+                    $descripcion = preg_replace('/[[:^print:]]/', '', $descripcion);
+
                     $partes = explode(':', $descripcion, 2);
                     if (count($partes) === 2) {
                         $horario = trim($partes[1]);
@@ -168,10 +170,20 @@ class MapeoPlacesAListingService
     protected function convertirHorarioAFormato24h(string $horario): ?string
     {
         try {
-            // Reemplazar diferentes tipos de guiones/separadores por uno estándar
-            $horario = str_replace(['–', '—', ' - '], '-', $horario);
+            // Normalizar caracteres invisibles y espacios especiales
+            $horario = str_replace(
+                ["\u{202F}", "\u{2009}", "\u{00A0}", "\u{200A}", "\u{200B}", "\u{FEFF}"],
+                ' ',
+                $horario
+            );
 
-            // Dividir por el guión
+            // Reemplazar diferentes tipos de guiones por uno estándar
+            $horario = str_replace(['–', '—', ' - ', '–', '-'], '-', $horario);
+
+            // Quitar dobles espacios
+            $horario = preg_replace('/\s+/', ' ', $horario);
+
+            // Dividir por el guion
             $partes = explode('-', $horario);
 
             if (count($partes) !== 2) {
@@ -190,9 +202,7 @@ class MapeoPlacesAListingService
                 return null;
             }
 
-            // Formato final: "8:00-18:00"
             return $aperturaConvertida . '-' . $cierreConvertida;
-
         } catch (\Exception $e) {
             \Log::error('Error al convertir horario', [
                 'horario' => $horario,
@@ -201,6 +211,7 @@ class MapeoPlacesAListingService
             return null;
         }
     }
+
 
     /**
      * Convierte una hora individual de 12h a 24h
