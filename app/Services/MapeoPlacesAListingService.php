@@ -102,14 +102,12 @@ class MapeoPlacesAListingService
     public function extraerHorariosParaConfiguracion(array $place): array
     {
         $openingHours = data_get($place, 'regularOpeningHours');
-
-        if (empty($openingHours)) {
+        if (empty($openingHours))
             return [];
-        }
 
-        $weekdayDescriptions = data_get($openingHours, 'weekdayDescriptions', []);
+        $periods = data_get($openingHours, 'periods', []);
 
-        // Inicializar todos los días como NULL
+        // Base
         $horarios = [
             'monday' => null,
             'tuesday' => null,
@@ -120,44 +118,56 @@ class MapeoPlacesAListingService
             'sunday' => null,
         ];
 
-        // Mapear los días de Google al formato de la tabla
-        $diasMap = [
-            'Monday' => 'monday',
-            'Tuesday' => 'tuesday',
-            'Wednesday' => 'wednesday',
-            'Thursday' => 'thursday',
-            'Friday' => 'friday',
-            'Saturday' => 'saturday',
-            'Sunday' => 'sunday',
+        // 0=Sunday ... 6=Saturday en Places
+        $dayMap = [
+            0 => 'sunday',
+            1 => 'monday',
+            2 => 'tuesday',
+            3 => 'wednesday',
+            4 => 'thursday',
+            5 => 'friday',
+            6 => 'saturday',
         ];
 
-        foreach ($weekdayDescriptions as $descripcion) {
-            // Formato de Google: "Monday: 8:00 AM – 6:00 PM" o "Sunday: Closed"
-            foreach ($diasMap as $diaIngles => $diaCampo) {
-                if (stripos($descripcion, $diaIngles) === 0) {
-                    // Extraer la parte después del ":"
-                    $descripcion = preg_replace('/[[:^print:]]/', '', $descripcion);
+        foreach ($periods as $p) {
+            $open = data_get($p, 'open');
+            $close = data_get($p, 'close');
+            if (!$open || !$close)
+                continue;
 
-                    $partes = explode(':', $descripcion, 2);
-                    if (count($partes) === 2) {
-                        $horario = trim($partes[1]);
+            $idx = data_get($open, 'day');
+            if (!is_int($idx) || !array_key_exists($idx, $dayMap))
+                continue;
 
-                        // Si dice "Closed", dejar como NULL
-                        if (stripos($horario, 'Closed') !== false) {
-                            $horarios[$diaCampo] = null;
-                        } else {
-                            // Convertir de "8:00 AM – 6:00 PM" a "8:00-18:00"
-                            $horarioConvertido = $this->convertirHorarioAFormato24h($horario);
-                            $horarios[$diaCampo] = $horarioConvertido;
-                        }
-                    }
-                    break;
-                }
+            $campo = $dayMap[$idx];
+
+            $openStr = $this->compactHour((int) data_get($open, 'hour', 0), (int) data_get($open, 'minute', 0));   // "8:30" o "9"
+            $closeStr = $this->compactHour((int) data_get($close, 'hour', 0), (int) data_get($close, 'minute', 0));  // "20"  o "20:30"
+
+            $horarios[$campo] = "{$openStr}-{$closeStr}";
+        }
+
+        // Los días que no llegaron en periods están "cerrados"
+        foreach ($horarios as $dia => $val) {
+            if ($val === null) {
+                $horarios[$dia] = 'closed-closed';
             }
         }
 
         return $horarios;
     }
+
+    protected function compactHour(int $hour, int $minute): string
+    {
+        $hour = max(0, min(23, $hour));
+        $minute = max(0, min(59, $minute));
+
+        if ($minute === 0) {
+            return (string) (int) $hour;        // 08 → "8", 20 → "20"
+        }
+        return sprintf('%d:%02d', $hour, $minute);  // 8:30 → "8:30"
+    }
+
 
     /**
      * Convierte horario de formato 12h a 24h
@@ -170,22 +180,31 @@ class MapeoPlacesAListingService
     protected function convertirHorarioAFormato24h(string $horario): ?string
     {
         try {
-            // Normalizar caracteres invisibles y espacios especiales
+            // 1. Reemplazar todos los tipos de guiones (–, —, -, etc.) por uno estándar
+            $horario = str_replace(
+                ["–", "—", "-", "–", "−", "—", "–"],
+                "-",
+                $horario
+            );
+
+            // 2. Limpiar espacios invisibles y normalizar
             $horario = str_replace(
                 ["\u{202F}", "\u{2009}", "\u{00A0}", "\u{200A}", "\u{200B}", "\u{FEFF}"],
                 ' ',
                 $horario
             );
 
-            // Reemplazar diferentes tipos de guiones por uno estándar
-            $horario = str_replace(['–', '—', ' - ', '–', '-'], '-', $horario);
+            // 3. Eliminar dobles espacios y espacios alrededor del guion
+            $horario = preg_replace('/\s*-\s*/', '-', $horario);
+            $horario = trim(preg_replace('/\s+/', ' ', $horario));
 
-            // Quitar dobles espacios
-            $horario = preg_replace('/\s+/', ' ', $horario);
+            // 4. Si por error desapareció el guion (caso "8:30AM8:00PM"), lo reinsertamos
+            if (strpos($horario, '-') === false && preg_match_all('/(AM|PM)/i', $horario) === 2) {
+                $horario = preg_replace('/(AM|PM)\s*/i', '$1-', $horario, 1);
+            }
 
-            // Dividir por el guion
+            // 5. Dividir
             $partes = explode('-', $horario);
-
             if (count($partes) !== 2) {
                 \Log::warning('Formato de horario no esperado', ['horario' => $horario]);
                 return null;
@@ -194,7 +213,6 @@ class MapeoPlacesAListingService
             $apertura = trim($partes[0]);
             $cierre = trim($partes[1]);
 
-            // Convertir ambas partes a formato 24h
             $aperturaConvertida = $this->convertirHora12a24($apertura);
             $cierreConvertida = $this->convertirHora12a24($cierre);
 
@@ -202,7 +220,8 @@ class MapeoPlacesAListingService
                 return null;
             }
 
-            return $aperturaConvertida . '-' . $cierreConvertida;
+            return $this->compactRange($aperturaConvertida . '-' . $cierreConvertida);
+
         } catch (\Exception $e) {
             \Log::error('Error al convertir horario', [
                 'horario' => $horario,
@@ -211,6 +230,33 @@ class MapeoPlacesAListingService
             return null;
         }
     }
+
+    protected function compactRange(string $range): string
+    {
+        [$a, $b] = explode('-', $range);
+        $a = $this->stripZeroMinutes($a);
+        $b = $this->stripZeroMinutes($b);
+        // quitar cero a la izquierda en la hora
+        $a = ltrim($a, '0');
+        if ($a === '')
+            $a = '0';
+        $b = ltrim($b, '0');
+        if ($b === '')
+            $b = '0';
+        return $a . '-' . $b;
+    }
+
+    protected function stripZeroMinutes(string $hm): string
+    {
+        // "08:00" → "8", "20:00" → "20", "08:30" → "8:30"
+        if (preg_match('/^0?(\d+):00$/', $hm, $m))
+            return $m[1];
+        if (preg_match('/^0?(\d+):([0-5]\d)$/', $hm, $m))
+            return $m[1] . ':' . $m[2];
+        return ltrim($hm, '0');
+    }
+
+
 
 
     /**
