@@ -105,52 +105,60 @@ class MapeoPlacesAListingService
         if (empty($openingHours))
             return [];
 
-        $periods = data_get($openingHours, 'periods', []);
+        $weekdayDescriptions = data_get($openingHours, 'weekdayDescriptions', []);
+        if (empty($weekdayDescriptions))
+            return [];
 
-        // Base
-        $horarios = [
-            'monday' => null,
-            'tuesday' => null,
-            'wednesday' => null,
-            'thursday' => null,
-            'friday' => null,
-            'saturday' => null,
-            'sunday' => null,
+        // Base vacía
+        $horarios = [];
+
+        // Mapeo de días en inglés a español
+        $dayNameMap = [
+            'Monday' => 'monday',
+            'Tuesday' => 'tuesday',
+            'Wednesday' => 'wednesday',
+            'Thursday' => 'thursday',
+            'Friday' => 'friday',
+            'Saturday' => 'saturday',
+            'Sunday' => 'sunday',
         ];
 
-        // 0=Sunday ... 6=Saturday en Places
-        $dayMap = [
-            0 => 'sunday',
-            1 => 'monday',
-            2 => 'tuesday',
-            3 => 'wednesday',
-            4 => 'thursday',
-            5 => 'friday',
-            6 => 'saturday',
-        ];
+        foreach ($weekdayDescriptions as $desc) {
+            // Buscar qué día es
+            $dayEs = null;
+            foreach ($dayNameMap as $dayEn => $dayEsMap) {
+                if (stripos($desc, $dayEn . ':') === 0) {
+                    $dayEs = $dayEsMap;
+                    break;
+                }
+            }
 
-        foreach ($periods as $p) {
-            $open = data_get($p, 'open');
-            $close = data_get($p, 'close');
-            if (!$open || !$close)
+            if (!$dayEs)
                 continue;
 
-            $idx = data_get($open, 'day');
-            if (!is_int($idx) || !array_key_exists($idx, $dayMap))
+            // Extraer la parte después de ":"
+            $partes = explode(':', $desc, 2);
+            if (count($partes) !== 2)
                 continue;
 
-            $campo = $dayMap[$idx];
+            $horarioPart = trim($partes[1]);
 
-            $openStr = $this->compactHour((int) data_get($open, 'hour', 0), (int) data_get($open, 'minute', 0));   // "8:30" o "9"
-            $closeStr = $this->compactHour((int) data_get($close, 'hour', 0), (int) data_get($close, 'minute', 0));  // "20"  o "20:30"
+            // Caso 1: Open 24 hours
+            if (stripos($horarioPart, 'Open 24 hours') !== false) {
+                $horarios[$dayEs] = 'open_24:open_24';
+                continue;
+            }
 
-            $horarios[$campo] = "{$openStr}-{$closeStr}";
-        }
+            // Caso 2: Closed (NO lo incluimos, tu proyecto decide)
+            if (stripos($horarioPart, 'Closed') !== false) {
+                // No hacer nada, dejar que tu proyecto principal lo maneje
+                continue;
+            }
 
-        // Los días que no llegaron en periods están "cerrados"
-        foreach ($horarios as $dia => $val) {
-            if ($val === null) {
-                $horarios[$dia] = 'closed-closed';
+            // Caso 3: Horario normal (ej: "6:00 AM – 4:00 PM")
+            $horarioFormateado = $this->convertirHorarioAFormato24h($horarioPart);
+            if ($horarioFormateado) {
+                $horarios[$dayEs] = $horarioFormateado;
             }
         }
 
@@ -327,6 +335,9 @@ class MapeoPlacesAListingService
         $horarios = $this->extraerHorariosParaConfiguracion($place);
 
         if (empty($horarios)) {
+            \Log::info('No hay horarios para guardar', [
+                'listing_id' => $listingId
+            ]);
             return;
         }
 
@@ -342,23 +353,25 @@ class MapeoPlacesAListingService
             ->exists();
 
         if ($existe) {
-            // Actualizar
+            // Actualizar solo los campos que llegaron
             $conn->table('time_configuration')
                 ->where('listing_id', $listingId)
                 ->update($horarios);
 
             \Log::info('Horarios actualizados en time_configuration', [
-                'listing_id' => $listingId
+                'listing_id' => $listingId,
+                'dias_actualizados' => array_keys($horarios)
             ]);
         } else {
-            // Insertar
+            // Insertar (los campos no incluidos quedarán como NULL o default)
             $conn->table('time_configuration')->insert($horarios);
 
             \Log::info('Horarios insertados en time_configuration', [
-                'listing_id' => $listingId
+                'listing_id' => $listingId,
+                'dias_insertados' => array_keys($horarios)
             ]);
         }
-    }
+    }   
 
     /**
      * Mapea las fotos del lugar
