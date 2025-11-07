@@ -145,7 +145,7 @@ class MapeoPlacesAListingService
 
             // Caso 1: Open 24 hours
             if (stripos($horarioPart, 'Open 24 hours') !== false) {
-                $horarios[$dayEs] = 'open_24:open_24';
+                $horarios[$dayEs] = 'open_24-open_24';
                 continue;
             }
 
@@ -371,7 +371,7 @@ class MapeoPlacesAListingService
                 'dias_insertados' => array_keys($horarios)
             ]);
         }
-    }   
+    }
 
     /**
      * Mapea las fotos del lugar
